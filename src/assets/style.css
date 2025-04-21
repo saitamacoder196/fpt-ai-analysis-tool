@@ -1,0 +1,132 @@
+/* Custom Styling for FPT AI Analysis Tool */
+
+/* Header */
+h1, h2, h3, h4, h5, h6 {
+    color: #FF6B00;
+    font-weight: 600;
+}
+
+/* Main container */
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
+
+/* Sidebar */
+.sidebar .sidebar-content {
+    background-color: #F5F5F5;
+}
+
+/* Metrics */
+div[data-testid="stMetricValue"] {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #FF6B00;
+}
+
+div[data-testid="stMetricDelta"] {
+    font-size: 1rem;
+    font-weight: normal;
+}
+
+/* Buttons */
+div.stButton > button {
+    background-color: #FF6B00;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    font-weight: bold;
+}
+
+div.stButton > button:hover {
+    background-color: #E65200;
+}
+
+/* Data frames */
+div[data-testid="stDataFrame"] {
+    border: 1px solid #E0E0E0;
+    border-radius: 5px;
+    padding: 1rem;
+}
+
+/* Info, success, warning, error boxes */
+div.stInfo, div.stSuccess, div.stWarning, div.stError {
+    border-radius: 5px;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+/* Expandable sections */
+div.streamlit-expanderHeader {
+    font-weight: 600;
+    color: #333;
+}
+
+/* Input fields */
+div.stTextInput > div > div > input {
+    border-radius: 4px;
+    border: 1px solid #CCC;
+}
+
+div.stTextInput > div > div > input:focus {
+    border-color: #FF6B00;
+    box-shadow: 0 0 0 2px rgba(255, 107, 0, 0.2);
+}
+
+/* Charts */
+div.stChart {
+    background-color: #FFFFFF;
+    border-radius: 5px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    padding: 1rem;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 16px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    height: 40px;
+    white-space: pre-wrap;
+    border-radius: 4px 4px 0 0;
+    font-weight: 500;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: #FF6B00 !important;
+    color: white !important;
+}
+
+/* Chat elements */
+[data-testid="stChatMessageContent"] {
+    background-color: #F5F5F5;
+    border-radius: 15px;
+    padding: 10px 15px;
+    margin: 5px 0;
+}
+
+.stChatFloatingInputContainer {
+    border-top: 1px solid #E0E0E0;
+    padding-top: 10px;
+}
+
+/* FPT specific colors */
+.fpt-orange {
+    color: #FF6B00;
+}
+
+.fpt-orange-bg {
+    background-color: #FF6B00;
+    color: white;
+}
+
+.fpt-blue {
+    color: #0066B3;
+}
+
+.fpt-blue-bg {
+    background-color: #0066B3;
+    color: white;
+}
