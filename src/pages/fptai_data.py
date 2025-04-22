@@ -334,7 +334,6 @@ def render():
             filtered_scenarios = []
             
             for scenario in scenarios:
-
                 # Kiểm tra tên scenario có match với pattern không
                 if re.match(pattern, scenario.get("name", "")):
                     filtered_scenarios.append(scenario)
@@ -480,8 +479,8 @@ def render():
                                 # Lưu dữ liệu vào session state để sử dụng ở nơi khác
                                 st.session_state.all_verified_steps = all_steps_df
                                 
-                                # Tạo nút Export
-                                col1, col2 = st.columns(2)
+                                # Tạo các nút Export
+                                col1, col2, col3 = st.columns(3)
                                 
                                 with col1:
                                     # Export tất cả steps
@@ -535,6 +534,35 @@ def render():
                                         )
                                     else:
                                         st.info("Không có FAQs nào chưa có trong chunks.")
+                                
+                                with col3:
+                                    # Export dữ liệu đã verify AI đầy đủ
+                                    verified_steps = all_steps_df[all_steps_df["ai_verified"] == True]
+                                    if not verified_steps.empty:
+                                        export_verified_df = pd.DataFrame({
+                                            "Department": verified_steps["department"],
+                                            "Scenario": verified_steps["scenario_name"],
+                                            "Step Name": verified_steps["name"],
+                                            "Step Code": verified_steps["code"],
+                                            "Step Type": verified_steps["type"],
+                                            "Has Match in Chunks": ["Có" if has_match else "Không" for has_match in verified_steps["has_match"]],
+                                            "Document Name": verified_steps["document_name"],
+                                            "Config Similarity": [f"{score:.2f}%" if score > 0 else "" for score in verified_steps["similarity_score"]],
+                                            "AI Score": [f"{score}%" if score > 0 else "" for score in verified_steps["ai_score"]],
+                                            "AI Explanation": verified_steps["ai_explanation"]
+                                        })
+                                        
+                                        csv = export_verified_df.to_csv(index=False).encode('utf-8')
+                                        filename = f"{bot_selection}_verified_steps_with_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                                        
+                                        st.download_button(
+                                            label="Export AI Verified Steps",
+                                            data=csv,
+                                            file_name=filename,
+                                            mime="text/csv",
+                                        )
+                                    else:
+                                        st.info("Chưa có step nào được verify bởi AI.")
                                 
                                 # Hiển thị thống kê
                                 st.subheader("Thống kê kết quả xác minh AI")
@@ -609,6 +637,13 @@ def render():
                 # Cho phép người dùng chọn một scenario để xem chi tiết
                 selected_scenario_name = st.selectbox("Chọn Scenario để xem chi tiết", scenario_names)
                 
+                # Lưu lại scenario_name được chọn
+                if "selected_scenario_name" not in st.session_state or st.session_state.selected_scenario_name != selected_scenario_name:
+                    st.session_state.selected_scenario_name = selected_scenario_name
+                    # Reset step data khi thay đổi scenario
+                    if "step_df" in st.session_state:
+                        del st.session_state.step_df
+                
                 # Tìm scenario được chọn
                 selected_scenario = next((s for s in filtered_scenarios if s["name"] == selected_scenario_name), None)
                 
@@ -622,62 +657,67 @@ def render():
                         st.warning("Không có step nào được kích hoạt trong scenario này.")
                         return
                     
-                    # Tạo và xử lý danh sách steps
-                    step_data = []
-                    
-                    # Tạo progress bar
-                    progress_text = "Đang phân tích các steps..."
-                    if chunks_data is not None:
-                        my_bar = st.progress(0, text=progress_text)
-                    
-                    # Duyệt qua từng step và phân tích
-                    for i, step in enumerate(active_steps):
-                        # Cập nhật progress bar
+                    # Kiểm tra nếu step_df chưa có trong session_state hoặc kịch bản đã thay đổi
+                    if "step_df" not in st.session_state:
+                        # Tạo và xử lý danh sách steps
+                        step_data = []
+                        
+                        # Tạo progress bar
+                        progress_text = "Đang phân tích các steps..."
                         if chunks_data is not None:
-                            progress = (i + 1) / len(active_steps)
-                            my_bar.progress(progress, text=f"{progress_text} ({i+1}/{len(active_steps)})")
+                            my_bar = st.progress(0, text=progress_text)
                         
-                        # Tạo nội dung từ text và quick_reply cards
-                        content = get_step_content(step)
+                        # Duyệt qua từng step và phân tích
+                        for i, step in enumerate(active_steps):
+                            # Cập nhật progress bar
+                            if chunks_data is not None:
+                                progress = (i + 1) / len(active_steps)
+                                my_bar.progress(progress, text=f"{progress_text} ({i+1}/{len(active_steps)})")
+                            
+                            # Tạo nội dung từ text và quick_reply cards
+                            content = get_step_content(step)
+                            
+                            # Xác định kiểu step
+                            step_type = determine_step_type(content)
+                            
+                            # Tìm kiếm trong chunks (nếu có)
+                            matching_chunk = None
+                            if chunks_data is not None and content.strip() != "":
+                                matching_chunk = find_matching_chunk(
+                                    content, chunks_data, bot_selection, 
+                                    similarity_method=similarity_method,
+                                    similarity_threshold=similarity_threshold
+                                )
+                            
+                            step_data.append({
+                                "name": step.get("name", "Không có tên"),
+                                "code": step["code"],
+                                "position": step.get("position", 0),
+                                "content": content,
+                                "type": step_type,
+                                "has_match": matching_chunk is not None,
+                                "document_name": matching_chunk["Document name(*)"] if matching_chunk is not None else "",
+                                "similarity_score": matching_chunk["similarity_score"] if matching_chunk is not None else 0,
+                                "similarity_details": matching_chunk.get("similarity_details", {}) if matching_chunk is not None else {},
+                                "scenario_name": selected_scenario_name,
+                                "ai_verified": False,  # Thêm trường để theo dõi việc xác minh AI
+                                "ai_score": 0,         # Thêm trường để lưu điểm AI
+                                "ai_explanation": ""   # Thêm trường để lưu giải thích từ AI
+                            })
                         
-                        # Xác định kiểu step
-                        step_type = determine_step_type(content)
+                        # Hoàn thành progress bar
+                        if chunks_data is not None:
+                            my_bar.progress(100, text="Phân tích hoàn tất!")
+                            st.success("Đã phân tích xong tất cả các steps!")
                         
-                        # Tìm kiếm trong chunks (nếu có)
-                        matching_chunk = None
-                        if chunks_data is not None and content.strip() != "":
-                            matching_chunk = find_matching_chunk(
-                                content, chunks_data, bot_selection, 
-                                similarity_method=similarity_method,
-                                similarity_threshold=similarity_threshold
-                            )
-                        
-                        step_data.append({
-                            "name": step.get("name", "Không có tên"),
-                            "code": step["code"],
-                            "position": step.get("position", 0),
-                            "content": content,
-                            "type": step_type,
-                            "has_match": matching_chunk is not None,
-                            "document_name": matching_chunk["Document name(*)"] if matching_chunk is not None else "",
-                            "similarity_score": matching_chunk["similarity_score"] if matching_chunk is not None else 0,
-                            "similarity_details": matching_chunk.get("similarity_details", {}) if matching_chunk is not None else {},
-                            "scenario_name": selected_scenario_name,
-                            "ai_verified": False,  # Thêm trường để theo dõi việc xác minh AI
-                            "ai_score": 0,         # Thêm trường để lưu điểm AI
-                            "ai_explanation": ""   # Thêm trường để lưu giải thích từ AI
-                        })
+                        # Tạo DataFrame cho steps và lưu vào session_state
+                        st.session_state.step_df = pd.DataFrame(step_data)
                     
-                    # Hoàn thành progress bar
-                    if chunks_data is not None:
-                        my_bar.progress(100, text="Phân tích hoàn tất!")
-                        st.success("Đã phân tích xong tất cả các steps!")
-                    
-                    # Tạo DataFrame cho steps
-                    step_df = pd.DataFrame(step_data)
+                    # Sử dụng step_df từ session_state
+                    step_df = st.session_state.step_df
                     
                     # Nút export và verify AI
-                    col1, col2, col3 = st.columns([2, 2, 3])
+                    col1, col2 = st.columns(2)
                     with col1:
                         if st.button("Export Steps Data", type="primary"):
                             # Tạo DataFrame cho export
@@ -734,14 +774,14 @@ def render():
                                     verified_count = 0
                                     
                                     # Duyệt qua từng step trong DataFrame
-                                    updated_step_data = []
-                                    for i, step_row in enumerate(step_data):
+                                    updated_step_data = step_df.to_dict('records')
+                                    for i, step_row in enumerate(updated_step_data):
                                         # Cập nhật progress bar
-                                        progress = (i + 1) / len(step_data)
-                                        progress_bar.progress(progress, text=f"Đang xác minh steps với AI... ({i+1}/{len(step_data)})")
+                                        progress = (i + 1) / len(updated_step_data)
+                                        progress_bar.progress(progress, text=f"Đang xác minh steps với AI... ({i+1}/{len(updated_step_data)})")
                                         
                                         # Cập nhật trạng thái
-                                        status_container.info(f"Đang xác minh step: {step_row['name']} ({i+1}/{len(step_data)})")
+                                        status_container.info(f"Đang xác minh step: {step_row['name']} ({i+1}/{len(updated_step_data)})")
                                         
                                         # Chỉ xác minh steps có match trong chunks
                                         if step_row["has_match"] and chunks_data is not None:
@@ -772,16 +812,42 @@ def render():
                                                 
                                                 # Thêm độ trễ nhỏ để tránh vượt quá rate limit
                                                 time.sleep(0.5)
-                                        
-                                        # Thêm vào danh sách mới
-                                        updated_step_data.append(step_row)
                                     
                                     # Cập nhật DataFrame
-                                    step_df = pd.DataFrame(updated_step_data)
+                                    st.session_state.step_df = pd.DataFrame(updated_step_data)
+                                    step_df = st.session_state.step_df
                                     
                                     # Hoàn thành progress bar
                                     progress_bar.progress(100, text="Xác minh hoàn tất!")
-                                    status_container.success(f"Đã xác minh xong {verified_count}/{len(step_data)} steps có match!")
+                                    status_container.success(f"Đã xác minh xong {verified_count}/{len(updated_step_data)} steps có match!")
+                                    
+                                    # Thêm nút để tải xuống dữ liệu đã verify
+                                    st.subheader("Xuất dữ liệu đã verify AI")
+                                    verified_steps = step_df[step_df["ai_verified"] == True]
+                                    if not verified_steps.empty:
+                                        export_verified_df = pd.DataFrame({
+                                            "Scenario": verified_steps["scenario_name"],
+                                            "Step Name": verified_steps["name"],
+                                            "Step Code": verified_steps["code"],
+                                            "Step Type": verified_steps["type"],
+                                            "Has Match in Chunks": ["Có" if has_match else "Không" for has_match in verified_steps["has_match"]],
+                                            "Document Name": verified_steps["document_name"],
+                                            "Config Similarity": [f"{score:.2f}%" if score > 0 else "" for score in verified_steps["similarity_score"]],
+                                            "AI Score": [f"{score}%" if score > 0 else "" for score in verified_steps["ai_score"]],
+                                            "AI Explanation": verified_steps["ai_explanation"]
+                                        })
+                                        
+                                        csv = export_verified_df.to_csv(index=False).encode('utf-8')
+                                        filename = f"{bot_selection}_{selected_scenario_name.replace(' ', '_')}_verified_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                                        
+                                        st.download_button(
+                                            label="Download Verified AI Data",
+                                            data=csv,
+                                            file_name=filename,
+                                            mime="text/csv",
+                                        )
+                                    else:
+                                        st.info("Không có step nào được xác minh bởi AI.")
                     
                     # Hiển thị dataframe với cột tùy chỉnh
                     step_display_df = pd.DataFrame({
@@ -871,43 +937,48 @@ def render():
                                         bot_selection
                                     )
                                     
-                                    # Thêm nút xác minh AI cho step hiện tại
-                                    if st.button("Xác minh với AI", key="verify_current_step"):
-                                        if not st.session_state.get("use_azure_openai", False):
-                                            st.error("Vui lòng kích hoạt và cấu hình Azure OpenAI trong tab 'Cấu hình' trước!")
-                                        else:
-                                            with st.spinner("Đang phân tích bằng AI..."):
-                                                verifier = AzureOpenAIVerifier(
-                                                    api_key=st.session_state.get("azure_openai_api_key"),
-                                                    endpoint=st.session_state.get("azure_openai_endpoint"),
-                                                    deployment_name=st.session_state.get("azure_openai_deployment")
-                                                )
-                                                
-                                                if verifier.is_configured():
-                                                    result = verifier.verify_similarity(selected_step_data["content"], matching_chunk["Content(*)"])
+                                    # Thêm nút xác minh AI cho step hiện tại nếu chưa được xác minh
+                                    # (Chỉ hiển thị nếu step chưa được xác minh)
+                                    if not selected_step_data["ai_verified"] and st.session_state.get("use_azure_openai", False):
+                                        if st.button("Xác minh step này với AI"):
+                                            if not st.session_state.get("use_azure_openai", False):
+                                                st.error("Vui lòng kích hoạt và cấu hình Azure OpenAI trong tab 'Cấu hình' trước!")
+                                            else:
+                                                with st.spinner("Đang phân tích bằng AI..."):
+                                                    verifier = AzureOpenAIVerifier(
+                                                        api_key=st.session_state.get("azure_openai_api_key"),
+                                                        endpoint=st.session_state.get("azure_openai_endpoint"),
+                                                        deployment_name=st.session_state.get("azure_openai_deployment")
+                                                    )
                                                     
-                                                    if result.get("success", False):
-                                                        # Cập nhật thông tin trong DataFrame
-                                                        idx = step_df[step_df["name"] == selected_step_name].index[0]
-                                                        step_df.at[idx, "ai_verified"] = True
-                                                        step_df.at[idx, "ai_score"] = result["similarity_score"]
-                                                        step_df.at[idx, "ai_explanation"] = result["explanation"]
+                                                    if verifier.is_configured():
+                                                        result = verifier.verify_similarity(selected_step_data["content"], matching_chunk["Content(*)"])
                                                         
-                                                        # Hiển thị kết quả
-                                                        ai_score = result["similarity_score"]
-                                                        if ai_score >= 80:
-                                                            st.success(f"Điểm tương đồng theo AI: {ai_score}/100 ✓")
-                                                        elif ai_score >= 50:
-                                                            st.warning(f"Điểm tương đồng theo AI: {ai_score}/100 ⚠")
+                                                        if result.get("success", False):
+                                                            # Cập nhật thông tin trong DataFrame
+                                                            idx = step_df[step_df["name"] == selected_step_name].index[0]
+                                                            st.session_state.step_df.at[idx, "ai_verified"] = True
+                                                            st.session_state.step_df.at[idx, "ai_score"] = result["similarity_score"]
+                                                            st.session_state.step_df.at[idx, "ai_explanation"] = result["explanation"]
+                                                            
+                                                            # Hiển thị kết quả
+                                                            ai_score = result["similarity_score"]
+                                                            if ai_score >= 80:
+                                                                st.success(f"Điểm tương đồng theo AI: {ai_score}/100 ✓")
+                                                            elif ai_score >= 50:
+                                                                st.warning(f"Điểm tương đồng theo AI: {ai_score}/100 ⚠")
+                                                            else:
+                                                                st.error(f"Điểm tương đồng theo AI: {ai_score}/100 ✗")
+                                                            
+                                                            st.write("**Giải thích:**")
+                                                            st.write(result["explanation"])
+                                                            
+                                                            # Yêu cầu người dùng rerun để cập nhật UI
+                                                            st.rerun()
                                                         else:
-                                                            st.error(f"Điểm tương đồng theo AI: {ai_score}/100 ✗")
-                                                        
-                                                        st.write("**Giải thích:**")
-                                                        st.write(result["explanation"])
+                                                            st.error(f"Lỗi khi phân tích: {result.get('error', 'Unknown error')}")
                                                     else:
-                                                        st.error(f"Lỗi khi phân tích: {result.get('error', 'Unknown error')}")
-                                                else:
-                                                    st.warning("Azure OpenAI chưa được cấu hình đầy đủ.")
+                                                        st.warning("Azure OpenAI chưa được cấu hình đầy đủ.")
                             else:
                                 st.warning("Không tìm thấy nội dung này trong data chunks")
                                 
@@ -960,7 +1031,7 @@ def render():
                                     st.write(f"**Position:** {card.get('position', 0)}")
                                     
                                     if "text" in config:
-                                        st.text_area(f"Text", config["text"], height=150)
+                                        st.text_area(f"Text content", config["text"], height=150)
                                     
                                     if card_type == "quick_reply" and "buttons" in config:
                                         st.subheader("Buttons")
@@ -1017,6 +1088,7 @@ def render():
                             "Số lượng kịch bản": department_scenarios.values()
                         }).sort_values(by="Số lượng kịch bản", ascending=False)
                         
+                        # Hiển thị biểu đồ
                         # Hiển thị biểu đồ
                         dept_chart = alt.Chart(dept_scenarios_df).mark_bar().encode(
                             x=alt.X('Bộ phận:N', sort='-y'),
@@ -1875,7 +1947,18 @@ def find_common_substrings(str1, str2, min_length=3):
     # Sắp xếp theo độ dài (dài nhất trước)
     substrings.sort(key=lambda x: len(x), reverse=True)
     
-    return substrings
+    # Loại bỏ các chuỗi con trùng lặp (nếu chuỗi này là con của chuỗi kia)
+    non_redundant_substrings = []
+    for i, phrase in enumerate(substrings):
+        is_subset = False
+        for j, other_phrase in enumerate(substrings):
+            if i != j and phrase in other_phrase:
+                is_subset = True
+                break
+        if not is_subset:
+            non_redundant_substrings.append(phrase)
+    
+    return non_redundant_substrings
 
 def substring_similarity(str1, str2, min_length=3):
     """
@@ -2170,10 +2253,10 @@ def render_advanced_comparison(st, selected_step_data, matching_chunk, bot_selec
     col1, col2 = st.columns(2)
     with col1:
         st.write("**Nội dung Step (đã xử lý)**")
-        st.text_area("", processed_step, height=150)
+        st.text_area("Nội dung step", processed_step, height=150, label_visibility="hidden")
     with col2:
         st.write("**Nội dung Chunk (đã xử lý)**")
-        st.text_area("", processed_chunk, height=150)
+        st.text_area("Nội dung chunk", processed_chunk, height=150, label_visibility="hidden")
     
     # Phân tích chuỗi con chung
     score, details = common_phrases_similarity(processed_step, processed_chunk)
@@ -2181,29 +2264,9 @@ def render_advanced_comparison(st, selected_step_data, matching_chunk, bot_selec
     # Hiển thị kết quả phân tích
     st.write(f"**Điểm tương đồng dựa trên chuỗi con: {score*100:.2f}%**")
     
-    # Hiển thị các chuỗi con dài (3+ từ)
-    if details["details_3words"]["common_substrings"]:
-        st.write("**Các cụm từ chung (3+ từ):**")
-        for i, phrase in enumerate(details["details_3words"]["common_substrings"][:5]):  # Hiển thị tối đa 5 cụm từ
+    # Hiển thị các chuỗi con dài (3+ từ) - chỉ hiển thị các chuỗi không trùng lặp
+    common_substrings = details["details_3words"]["common_substrings"]
+    if common_substrings:
+        st.write("**Các cụm từ chung không trùng lặp (3+ từ):**")
+        for i, phrase in enumerate(common_substrings[:5]):  # Hiển thị tối đa 5 cụm từ
             st.info(f"{i+1}. {phrase}")
-    
-    # Kiểm tra Azure OpenAI
-    if st.session_state.get("use_azure_openai", False) and st.button("Xác minh với AI"):
-        with st.spinner("Đang phân tích bằng AI..."):
-            verifier = AzureOpenAIVerifier(
-                api_key=st.session_state.get("azure_openai_api_key"),
-                endpoint=st.session_state.get("azure_openai_endpoint"),
-                deployment_name=st.session_state.get("azure_openai_deployment")
-            )
-            
-            if verifier.is_configured():
-                result = verifier.verify_similarity(step_content, chunk_content)
-                
-                if result.get("success", False):
-                    st.success(f"Điểm tương đồng theo AI: {result['similarity_score']}/100")
-                    st.write("**Giải thích:**")
-                    st.write(result["explanation"])
-                else:
-                    st.error(f"Lỗi khi phân tích: {result.get('error', 'Unknown error')}")
-            else:
-                st.warning("Azure OpenAI chưa được cấu hình đầy đủ.")
